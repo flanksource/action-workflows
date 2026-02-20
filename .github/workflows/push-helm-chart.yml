@@ -1,0 +1,112 @@
+---
+name: Push Helm Chart to flanksource/charts
+
+"on":
+  workflow_call:
+    inputs:
+      filename_regex:
+        description: >-
+          Regex pattern to match the helm chart file
+          (e.g., flanksource-ui-*.tgz)
+        required: true
+        type: string
+      version:
+        description: 'Chart version (e.g., 1.4.180)'
+        required: true
+        type: string
+      pr_title:
+        description: >-
+          Title for the pull request
+          (e.g., Release 1.4.180 of flanksource/flanksource-ui)
+        required: true
+        type: string
+    secrets:
+      github_token:
+        description: >-
+          GitHub token with permissions to push to
+          flanksource/charts
+        required: true
+
+jobs:
+  push-chart:
+    runs-on: ubuntu-latest
+    env:
+      BRANCH_NAME: chart-update/${{ inputs.version }}
+    steps:
+      - name: Checkout charts repository
+        # v4.1.1
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          repository: flanksource/charts
+          ref: gh-pages
+          token: ${{ secrets.github_token }}
+          path: charts
+
+      - name: Create PR branch
+        id: create-branch
+        run: |
+          cd charts
+          git checkout -b "$BRANCH_NAME"
+
+          # Copy helm chart file(s) matching the regex
+          shopt -s nullglob
+          FILES=(../${{ inputs.filename_regex }})
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "Error: No files matching pattern" \
+              "'${{ inputs.filename_regex }}'"
+            exit 1
+          fi
+
+          # Validate that all matched files are .tgz files
+          for file in "${FILES[@]}"; do
+            if [[ ! "$file" =~ \.tgz$ ]]; then
+              echo "Error: File '$file' is not a .tgz file"
+              exit 1
+            fi
+          done
+
+          cp "${FILES[@]}" ./
+
+          # Update helm repository index
+          if [ -f index.yaml ]; then
+            helm repo index --merge index.yaml .
+          else
+            helm repo index .
+          fi
+
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Commit changes
+          git add .
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            git commit -m "${{ inputs.pr_title }}"
+            git push origin "$BRANCH_NAME"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create and merge PR
+        if: steps.create-branch.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.github_token }}
+        run: |
+          cd charts
+
+          # Create pull request
+          PR_URL=$(gh pr create \
+            --base gh-pages \
+            --head "$BRANCH_NAME" \
+            --title "${{ inputs.pr_title }}" \
+            --body "Automated chart release" \
+            --repo flanksource/charts)
+
+          # Auto-merge the PR
+          gh pr merge "$PR_URL" \
+            --auto \
+            --squash \
+            --delete-branch \
+            --repo flanksource/charts
