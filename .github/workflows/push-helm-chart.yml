@@ -1,0 +1,83 @@
+---
+name: Push Helm Chart to flanksource/charts
+
+"on":
+  workflow_call:
+    inputs:
+      filename_regex:
+        description: >-
+          Regex pattern to match the helm chart file
+          (e.g., flanksource-ui-*.tgz)
+        required: true
+        type: string
+      version:
+        description: 'Chart version (e.g., 1.4.180)'
+        required: true
+        type: string
+      pr_title:
+        description: >-
+          Title for the pull request
+          (e.g., Release 1.4.180 of flanksource/flanksource-ui)
+        required: true
+        type: string
+    secrets:
+      github_token:
+        description: >-
+          GitHub token with permissions to push to
+          flanksource/charts
+        required: true
+
+jobs:
+  push-chart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout charts repository
+        uses: actions/checkout@v4
+        with:
+          repository: flanksource/charts
+          ref: gh-pages
+          token: ${{ secrets.github_token }}
+          path: charts
+
+      - name: Create PR branch
+        run: |
+          cd charts
+          BRANCH="chart-update/${{ inputs.version }}"
+          git checkout -b "$BRANCH"
+
+          # Copy helm chart file(s) matching the regex
+          cp ../${{ inputs.filename_regex }} ./
+
+          # Update helm repository index
+          helm repo index --merge index.yaml .
+
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Commit changes
+          git add .
+          git commit -m "${{ inputs.pr_title }}"
+          git push origin "$BRANCH"
+
+      - name: Create and merge PR
+        env:
+          GH_TOKEN: ${{ secrets.github_token }}
+        run: |
+          cd charts
+          BRANCH="chart-update/${{ inputs.version }}"
+
+          # Create pull request
+          PR_URL=$(gh pr create \
+            --base gh-pages \
+            --head "$BRANCH" \
+            --title "${{ inputs.pr_title }}" \
+            --body "Automated chart release" \
+            --repo flanksource/charts)
+
+          # Auto-merge the PR
+          gh pr merge "$PR_URL" \
+            --auto \
+            --squash \
+            --delete-branch \
+            --repo flanksource/charts
