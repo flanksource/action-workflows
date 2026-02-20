@@ -40,16 +40,28 @@ jobs:
           path: charts
 
       - name: Create PR branch
+        id: create-branch
         run: |
           cd charts
           BRANCH="chart-update/${{ inputs.version }}"
           git checkout -b "$BRANCH"
 
           # Copy helm chart file(s) matching the regex
-          cp ../${{ inputs.filename_regex }} ./
+          shopt -s nullglob
+          FILES=(../${{ inputs.filename_regex }})
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "Error: No files matching pattern" \
+              "'${{ inputs.filename_regex }}'"
+            exit 1
+          fi
+          cp "${FILES[@]}" ./
 
           # Update helm repository index
-          helm repo index --merge index.yaml .
+          if [ -f index.yaml ]; then
+            helm repo index --merge index.yaml .
+          else
+            helm repo index .
+          fi
 
           # Configure git
           git config user.name "github-actions[bot]"
@@ -57,10 +69,17 @@ jobs:
 
           # Commit changes
           git add .
-          git commit -m "${{ inputs.pr_title }}"
-          git push origin "$BRANCH"
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            git commit -m "${{ inputs.pr_title }}"
+            git push origin "$BRANCH"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create and merge PR
+        if: steps.create-branch.outputs.has_changes == 'true'
         env:
           GH_TOKEN: ${{ secrets.github_token }}
         run: |
