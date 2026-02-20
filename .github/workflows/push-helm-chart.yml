@@ -30,9 +30,12 @@ name: Push Helm Chart to flanksource/charts
 jobs:
   push-chart:
     runs-on: ubuntu-latest
+    env:
+      BRANCH_NAME: chart-update/${{ inputs.version }}
     steps:
       - name: Checkout charts repository
-        uses: actions/checkout@v4
+        # v4.1.1
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
         with:
           repository: flanksource/charts
           ref: gh-pages
@@ -43,8 +46,7 @@ jobs:
         id: create-branch
         run: |
           cd charts
-          BRANCH="chart-update/${{ inputs.version }}"
-          git checkout -b "$BRANCH"
+          git checkout -b "$BRANCH_NAME"
 
           # Copy helm chart file(s) matching the regex
           shopt -s nullglob
@@ -54,6 +56,15 @@ jobs:
               "'${{ inputs.filename_regex }}'"
             exit 1
           fi
+
+          # Validate that all matched files are .tgz files
+          for file in "${FILES[@]}"; do
+            if [[ ! "$file" =~ \.tgz$ ]]; then
+              echo "Error: File '$file' is not a .tgz file"
+              exit 1
+            fi
+          done
+
           cp "${FILES[@]}" ./
 
           # Update helm repository index
@@ -74,7 +85,7 @@ jobs:
             echo "has_changes=false" >> $GITHUB_OUTPUT
           else
             git commit -m "${{ inputs.pr_title }}"
-            git push origin "$BRANCH"
+            git push origin "$BRANCH_NAME"
             echo "has_changes=true" >> $GITHUB_OUTPUT
           fi
 
@@ -84,12 +95,11 @@ jobs:
           GH_TOKEN: ${{ secrets.github_token }}
         run: |
           cd charts
-          BRANCH="chart-update/${{ inputs.version }}"
 
           # Create pull request
           PR_URL=$(gh pr create \
             --base gh-pages \
-            --head "$BRANCH" \
+            --head "$BRANCH_NAME" \
             --title "${{ inputs.pr_title }}" \
             --body "Automated chart release" \
             --repo flanksource/charts)
