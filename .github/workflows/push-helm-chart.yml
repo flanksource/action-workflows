@@ -51,7 +51,7 @@ jobs:
         with:
           repository: flanksource/charts
           ref: gh-pages
-          token: ${{ secrets.github_token }}
+          token: ${{ secrets.token }}
           path: charts
 
       - name: Create PR branch
@@ -104,7 +104,7 @@ jobs:
       - name: Create and merge PR
         if: steps.create-branch.outputs.has_changes == 'true'
         env:
-          GH_TOKEN: ${{ secrets.github_token }}
+          GH_TOKEN: ${{ secrets.token }}
         run: |
           cd charts
 
