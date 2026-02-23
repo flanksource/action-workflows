@@ -14,6 +14,13 @@ name: Push Helm Chart to flanksource/charts
         description: 'Chart version (e.g., 1.4.180)'
         required: true
         type: string
+      artifact_name:
+        description: >-
+          Name of the uploaded artifact containing the helm chart
+          .tgz file(s)
+        required: false
+        type: string
+        default: helm-chart
       pr_title:
         description: >-
           Title for the pull request
@@ -33,6 +40,11 @@ jobs:
     env:
       BRANCH_NAME: chart-update/${{ inputs.version }}
     steps:
+      - name: Download helm chart artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: ${{ inputs.artifact_name }}
+
       - name: Checkout charts repository
         # v4.1.1
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
