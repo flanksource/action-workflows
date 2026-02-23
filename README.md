@@ -32,7 +32,7 @@ jobs:
       version: "1.4.180"
       pr_title: "Release 1.4.180 of flanksource/flanksource-ui"
     secrets:
-      github_token: ${{ secrets.FLANKBOT }}
+      token: ${{ secrets.FLANKBOT }}
 ```
 
 **Inputs:**
@@ -44,7 +44,7 @@ jobs:
 
 **Secrets:**
 
-- `github_token` (required): GitHub token with permissions to push to flanksource/charts repository
+- `token` (required): GitHub token with permissions to push to flanksource/charts repository
 
 **What it does:**
 
