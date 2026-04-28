@@ -7,7 +7,7 @@ name: Publish Draft Release
       tag:
         description: >-
           Git tag of the draft release to publish (e.g., v1.2.3).
-          Must match the tag output by create-draft-release.
+          Must match the release tag to publish.
         required: true
         type: string
 

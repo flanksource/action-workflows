@@ -61,51 +61,29 @@ jobs:
 </details>
 
 <details>
-<summary><strong>Create Draft Semantic Release</strong></summary>
+<summary><strong>Create Semantic Release</strong></summary>
 
-Computes the next semantic version from commits using [`semantic-release`](https://github.com/semantic-release/semantic-release), which respects the repo's `.releaserc` / `release.config.*`, and creates a GitHub release. Configure `@semantic-release/github` with `draftRelease: true` in the calling repository to create the release in **draft** mode. Outputs the version and tag so downstream jobs can build artifacts and upload them before the release is published.
-
-This exists because GitHub now enforces release immutability: once a release is published, you cannot add or change its assets. The flow is therefore:
-
-```
-create draft → build artifacts → upload artifacts → publish draft
-```
+Computes the next semantic version from commits using [`semantic-release`](https://github.com/semantic-release/semantic-release), which respects the repo's `.releaserc` / `release.config.*`, and creates a GitHub release. Outputs the version and tag for downstream jobs.
 
 **Usage:**
 
 ```yaml
 jobs:
-  create-draft:
-    uses: flanksource/action-workflows/.github/workflows/create-draft-release.yml@main
+  create-release:
+    uses: flanksource/action-workflows/.github/workflows/create-release.yml@main
 
   build:
-    needs: create-draft
-    if: needs.create-draft.outputs.published == 'true'
+    needs: create-release
+    if: needs.create-release.outputs.published == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # ... build using needs.create-draft.outputs.version ...
-      - name: Upload asset to draft release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ needs.create-draft.outputs.tag }}" ./dist/*
-
-  publish:
-    needs: [create-draft, build]
-    if: needs.create-draft.outputs.published == 'true'
-    uses: flanksource/action-workflows/.github/workflows/publish-release.yml@main
-    with:
-      tag: ${{ needs.create-draft.outputs.tag }}
+      # ... build using needs.create-release.outputs.version ...
 ```
-
-**Inputs:**
-
-- `semantic_version` (optional): Version of `semantic-release` to install (e.g., `24.2.3`). Defaults to the action's latest stable.
-- `extra_plugins` (optional): Newline-separated list of extra `semantic-release` plugins to install (e.g., `conventional-changelog-conventionalcommits`).
 
 **Outputs:**
 
-- `published`: `'true'` when `semantic-release` determined a new version is due and a draft release was created. Always check this in dependent jobs.
+- `published`: `'true'` when `semantic-release` determined a new version is due and a release was created. Always check this in dependent jobs.
 - `version`: Computed semantic version without prefix (e.g., `1.2.3`). Empty when `published` is `'false'`.
 - `tag`: Computed git tag including any prefix (e.g., `v1.2.3`). Empty when `published` is `'false'`.
 
@@ -113,29 +91,28 @@ jobs:
 
 1. Checks out the calling repository with full history
 2. Runs `semantic-release` normally so it creates the git tag, semantic-release notes, and GitHub release
-3. The GitHub release is created as a draft when the calling repository configures `@semantic-release/github` with `draftRelease: true`
 
 </details>
 
 <details>
 <summary><strong>Publish Draft Release</strong></summary>
 
-Flips an existing draft release to published. Pair this with **Create Draft Semantic Release** at the end of a build pipeline once all artifacts have been uploaded.
+Flips an existing draft release to published at the end of a build pipeline once all artifacts have been uploaded.
 
 **Usage:**
 
 ```yaml
 jobs:
   publish:
-    needs: [create-draft, build]
+    needs: [create-release, build]
     uses: flanksource/action-workflows/.github/workflows/publish-release.yml@main
     with:
-      tag: ${{ needs.create-draft.outputs.tag }}
+      tag: ${{ needs.create-release.outputs.tag }}
 ```
 
 **Inputs:**
 
-- `tag` (required): Git tag of the draft release to publish (e.g., `v1.2.3`). Must match the tag output by `create-draft-release`.
+- `tag` (required): Git tag of the draft release to publish (e.g., `v1.2.3`).
 
 **What it does:**
 
