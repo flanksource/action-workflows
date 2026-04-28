@@ -18,19 +18,6 @@ name: Create Draft Semantic Release
         required: false
         type: string
         default: ''
-      target:
-        description: >-
-          Commit SHA the draft release should point at.
-          Defaults to the workflow run's commit.
-        required: false
-        type: string
-        default: ''
-      pre_release:
-        description: >-
-          Whether to mark the draft GitHub release as a pre-release.
-        required: false
-        type: boolean
-        default: false
     outputs:
       published:
         description: >-
@@ -65,38 +52,14 @@ jobs:
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
         with:
           fetch-depth: 0
-          persist-credentials: false
+          persist-credentials: true
 
-      - name: Compute next version with semantic-release
+      - name: Create draft release with semantic-release
         id: semantic
         # v4.2.2
         uses: cycjimmy/semantic-release-action@16ca923e6ccbb50770c415a0ccd43709a8c5f7a4
         with:
-          dry_run: true
           semantic_version: ${{ inputs.semantic_version }}
           extra_plugins: ${{ inputs.extra_plugins }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-
-      - name: Create draft release
-        if: steps.semantic.outputs.new_release_published == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.semantic.outputs.new_release_git_tag }}
-          NOTES: ${{ steps.semantic.outputs.new_release_notes }}
-          TARGET: ${{ inputs.target != '' && inputs.target || github.sha }}
-        run: |
-          printf '%s' "$NOTES" > release-notes.md
-          args=(
-            "$TAG"
-            --draft
-            --title "$TAG"
-            --notes-file release-notes.md
-            --target "$TARGET"
-          )
-
-          if [[ "${{ inputs.pre_release }}" == "true" ]]; then
-            args+=(--prerelease)
-          fi
-
-          gh release create "${args[@]}"

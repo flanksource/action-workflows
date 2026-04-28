@@ -63,7 +63,7 @@ jobs:
 <details>
 <summary><strong>Create Draft Semantic Release</strong></summary>
 
-Computes the next semantic version from commits (using [`semantic-release`](https://github.com/semantic-release/semantic-release), which respects the repo's `.releaserc`) and creates a GitHub release in **draft** mode. Outputs the version and tag so downstream jobs can build artifacts and upload them before the release is published.
+Computes the next semantic version from commits using [`semantic-release`](https://github.com/semantic-release/semantic-release), which respects the repo's `.releaserc` / `release.config.*`, and creates a GitHub release. Configure `@semantic-release/github` with `draftRelease: true` in the calling repository to create the release in **draft** mode. Outputs the version and tag so downstream jobs can build artifacts and upload them before the release is published.
 
 This exists because GitHub now enforces release immutability: once a release is published, you cannot add or change its assets. The flow is therefore:
 
@@ -77,8 +77,6 @@ create draft → build artifacts → upload artifacts → publish draft
 jobs:
   create-draft:
     uses: flanksource/action-workflows/.github/workflows/create-draft-release.yml@main
-    with:
-      pre_release: true # optional: mark the draft as a pre-release
 
   build:
     needs: create-draft
@@ -104,8 +102,6 @@ jobs:
 
 - `semantic_version` (optional): Version of `semantic-release` to install (e.g., `24.2.3`). Defaults to the action's latest stable.
 - `extra_plugins` (optional): Newline-separated list of extra `semantic-release` plugins to install (e.g., `conventional-changelog-conventionalcommits`).
-- `target` (optional): Commit SHA the draft release should point at. Defaults to the workflow run's commit.
-- `pre_release` (optional, default: `false`): When `true`, creates the draft release as a GitHub pre-release.
 
 **Outputs:**
 
@@ -116,8 +112,8 @@ jobs:
 **What it does:**
 
 1. Checks out the calling repository with full history
-2. Runs `semantic-release` in dry-run mode to compute the next version and release notes
-3. Creates a draft GitHub release with the computed tag and notes, optionally marked as a pre-release when `pre_release` is `true` (no tag is pushed yet — GitHub creates the tag when the release is published)
+2. Runs `semantic-release` normally so it creates the git tag, semantic-release notes, and GitHub release
+3. The GitHub release is created as a draft when the calling repository configures `@semantic-release/github` with `draftRelease: true`
 
 </details>
 
