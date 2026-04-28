@@ -25,6 +25,12 @@ name: Create Draft Semantic Release
         required: false
         type: string
         default: ''
+      pre_release:
+        description: >-
+          Whether to mark the draft GitHub release as a pre-release.
+        required: false
+        type: boolean
+        default: false
     outputs:
       published:
         description: >-
@@ -81,8 +87,16 @@ jobs:
           TARGET: ${{ inputs.target != '' && inputs.target || github.sha }}
         run: |
           printf '%s' "$NOTES" > release-notes.md
-          gh release create "$TAG" \
-            --draft \
-            --title "$TAG" \
-            --notes-file release-notes.md \
+          args=(
+            "$TAG"
+            --draft
+            --title "$TAG"
+            --notes-file release-notes.md
             --target "$TARGET"
+          )
+
+          if [[ "${{ inputs.pre_release }}" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+
+          gh release create "${args[@]}"

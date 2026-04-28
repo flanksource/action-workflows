@@ -77,6 +77,8 @@ create draft → build artifacts → upload artifacts → publish draft
 jobs:
   create-draft:
     uses: flanksource/action-workflows/.github/workflows/create-draft-release.yml@main
+    with:
+      pre_release: true # optional: mark the draft as a pre-release
 
   build:
     needs: create-draft
@@ -103,6 +105,7 @@ jobs:
 - `semantic_version` (optional): Version of `semantic-release` to install (e.g., `24.2.3`). Defaults to the action's latest stable.
 - `extra_plugins` (optional): Newline-separated list of extra `semantic-release` plugins to install (e.g., `conventional-changelog-conventionalcommits`).
 - `target` (optional): Commit SHA the draft release should point at. Defaults to the workflow run's commit.
+- `pre_release` (optional, default: `false`): When `true`, creates the draft release as a GitHub pre-release.
 
 **Outputs:**
 
@@ -114,7 +117,7 @@ jobs:
 
 1. Checks out the calling repository with full history
 2. Runs `semantic-release` in dry-run mode to compute the next version and release notes
-3. Creates a draft GitHub release with the computed tag and notes (no tag is pushed yet — GitHub creates the tag when the release is published)
+3. Creates a draft GitHub release with the computed tag and notes, optionally marked as a pre-release when `pre_release` is `true` (no tag is pushed yet — GitHub creates the tag when the release is published)
 
 </details>
 
