@@ -34,6 +34,8 @@ name: Push Helm Chart to flanksource/charts
           flanksource/charts
         required: true
 
+permissions: {}
+
 jobs:
   push-chart:
     runs-on: ubuntu-latest

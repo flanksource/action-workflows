@@ -63,7 +63,7 @@ jobs:
 <details>
 <summary><strong>Create Semantic Release</strong></summary>
 
-Computes the next semantic version from commits using [`semantic-release`](https://github.com/semantic-release/semantic-release), which respects the repo's `.releaserc` / `release.config.*`, and creates a GitHub release. Outputs the version and tag for downstream jobs.
+Computes the next semantic version from commits using [`semantic-release`](https://github.com/semantic-release/semantic-release), which respects the repo's `.releaserc` / `release.config.*`, and creates a GitHub release. Outputs the version and tag for downstream jobs. Callers can install extra plugins when their release config needs them.
 
 **Usage:**
 
@@ -71,6 +71,11 @@ Computes the next semantic version from commits using [`semantic-release`](https
 jobs:
   create-release:
     uses: flanksource/action-workflows/.github/workflows/create-release.yml@main
+    with:
+      extra_plugins: |
+        @semantic-release/git
+    secrets:
+      token: ${{ secrets.FLANKBOT }}
 
   build:
     needs: create-release
@@ -80,6 +85,14 @@ jobs:
       - uses: actions/checkout@v4
       # ... build using needs.create-release.outputs.version ...
 ```
+
+**Inputs:**
+
+- `extra_plugins` (optional): newline-separated semantic-release plugins to install, such as `@semantic-release/git`.
+
+**Secrets:**
+
+- `token` (required): token used for checkout, git push, and GitHub release operations.
 
 **Outputs:**
 
@@ -108,11 +121,17 @@ jobs:
     uses: flanksource/action-workflows/.github/workflows/publish-release.yml@main
     with:
       tag: ${{ needs.create-release.outputs.tag }}
+    secrets:
+      token: ${{ secrets.FLANKBOT }}
 ```
 
 **Inputs:**
 
 - `tag` (required): Git tag of the draft release to publish (e.g., `v1.2.3`).
+
+**Secrets:**
+
+- `token` (required): token used to publish the draft GitHub release.
 
 **What it does:**
 
