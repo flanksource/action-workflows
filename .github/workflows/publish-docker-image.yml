@@ -1,0 +1,176 @@
+---
+name: Publish Docker Image
+
+"on":
+  workflow_call:
+    inputs:
+      image_tags:
+        description: >-
+          Newline-separated full image tags to publish
+          (e.g., docker.io/flanksource/config-db:v1.2.3).
+        required: true
+        type: string
+      dockerfile:
+        description: Path to the Dockerfile.
+        required: false
+        type: string
+        default: Dockerfile
+      context:
+        description: Docker build context.
+        required: false
+        type: string
+        default: .
+      platforms:
+        description: Comma-separated target platforms.
+        required: false
+        type: string
+        default: linux/amd64
+      build_args:
+        description: Newline-separated Docker build args.
+        required: false
+        type: string
+        default: ""
+      cosign:
+        description: Sign pushed image digests using cosign keyless.
+        required: false
+        type: boolean
+        default: true
+      login_to_dockerhub:
+        description: Log in to Docker Hub before publishing.
+        required: false
+        type: boolean
+        default: true
+      login_to_ecr:
+        description: Log in to Amazon ECR before publishing.
+        required: false
+        type: boolean
+        default: false
+      ecr_registry_type:
+        description: 'Amazon ECR registry type: private or public.'
+        required: false
+        type: string
+        default: public
+      aws_region:
+        description: AWS region used for ECR login.
+        required: false
+        type: string
+        default: us-east-1
+    secrets:
+      docker_username:
+        description: Docker Hub username. Required when login_to_dockerhub is true.
+        required: false
+      docker_password:
+        description: Docker Hub password/token. Required when login_to_dockerhub is true.
+        required: false
+      aws_access_key_id:
+        description: AWS access key ID. Required when login_to_ecr is true.
+        required: false
+      aws_secret_access_key:
+        description: AWS secret access key. Required when login_to_ecr is true.
+        required: false
+      ghcr_username:
+        description: GHCR username. Defaults to github.actor when omitted.
+        required: false
+      ghcr_token:
+        description: GHCR token. Defaults to GITHUB_TOKEN when omitted.
+        required: false
+    outputs:
+      digest:
+        description: Published image digest from docker/build-push-action.
+        value: ${{ jobs.publish.outputs.digest }}
+
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Log in to Docker Hub
+        if: inputs.login_to_dockerhub
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          username: ${{ secrets.docker_username }}
+          password: ${{ secrets.docker_password }}
+
+      - name: Log in to GHCR
+        if: contains(inputs.image_tags, 'ghcr.io/')
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.ghcr_username || github.actor }}
+          password: ${{ secrets.ghcr_token || github.token }}
+
+      - name: Configure AWS Credentials
+        if: inputs.login_to_ecr
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          aws-access-key-id: ${{ secrets.aws_access_key_id }}
+          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Log in to Amazon ECR
+        if: inputs.login_to_ecr
+        uses: aws-actions/amazon-ecr-login@376925c9d111252e87ae59691e5a442dd100ef6a # v2.1.3
+        with:
+          registry-type: ${{ inputs.ecr_registry_type }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: true
+          tags: ${{ inputs.image_tags }}
+          build-args: ${{ inputs.build_args }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install cosign
+        if: inputs.cosign
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+
+      - name: Sign image digests
+        if: inputs.cosign
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_TAGS: ${{ inputs.image_tags }}
+        run: |
+          if [ -z "$DIGEST" ]; then
+            echo "docker/build-push-action did not return a digest"
+            exit 1
+          fi
+
+          declare -A repositories=()
+          while IFS= read -r tag; do
+            tag="${tag//$'\r'/}"
+            tag="${tag#${tag%%[![:space:]]*}}"
+            tag="${tag%${tag##*[![:space:]]}}"
+            [ -z "$tag" ] && continue
+
+            repository="${tag%@*}"
+            repository="${repository%:*}"
+            if [ -z "$repository" ] || [ "$repository" = "$tag" ]; then
+              echo "image tag must include an explicit tag: $tag"
+              exit 1
+            fi
+
+            repositories["$repository"]=1
+          done < <(printf '%s\n' "$IMAGE_TAGS" | tr ',' '\n')
+
+          for repository in "${!repositories[@]}"; do
+            cosign sign --yes "$repository@$DIGEST"
+          done

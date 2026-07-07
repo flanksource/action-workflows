@@ -108,6 +108,73 @@ jobs:
 </details>
 
 <details>
+<summary><strong>Publish Docker Image</strong></summary>
+
+Builds and pushes Docker images with [`docker/build-push-action`](https://github.com/docker/build-push-action). Optionally signs the pushed image digest using cosign keyless signing through GitHub Actions OIDC. Cosign signing is enabled by default.
+
+**Usage:**
+
+```yaml
+jobs:
+  docker:
+    uses: flanksource/action-workflows/.github/workflows/publish-docker-image.yml@main
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    with:
+      dockerfile: build/Dockerfile
+      context: .
+      platforms: linux/amd64,linux/arm64
+      image_tags: |
+        docker.io/flanksource/config-db:v1.2.3
+        docker.io/flanksource/config-db:latest
+        ghcr.io/flanksource/config-db:v1.2.3
+        public.ecr.aws/k4y9r6y5/config-db:v1.2.3
+      login_to_ecr: true
+      ecr_registry_type: public
+      cosign: true
+    secrets:
+      docker_username: ${{ secrets.DOCKER_USERNAME }}
+      docker_password: ${{ secrets.DOCKER_PASSWORD }}
+      aws_access_key_id: ${{ secrets.ECR_AWS_ACCESS_KEY }}
+      aws_secret_access_key: ${{ secrets.ECR_AWS_SECRET_ACCESS_KEY }}
+```
+
+**Inputs:**
+
+- `image_tags` (required): Newline-separated full image tags to publish.
+- `dockerfile` (optional, default: `Dockerfile`): Path to the Dockerfile.
+- `context` (optional, default: `.`): Docker build context.
+- `platforms` (optional, default: `linux/amd64`): Comma-separated target platforms.
+- `build_args` (optional): Newline-separated Docker build args.
+- `cosign` (optional, default: `true`): Sign pushed image digests using cosign keyless.
+- `login_to_dockerhub` (optional, default: `true`): Log in to Docker Hub.
+- `login_to_ecr` (optional, default: `false`): Log in to Amazon ECR.
+- `ecr_registry_type` (optional, default: `public`): Amazon ECR registry type: `public` or `private`.
+- `aws_region` (optional, default: `us-east-1`): AWS region used for ECR login.
+
+**Secrets:**
+
+- `docker_username` / `docker_password`: Required when `login_to_dockerhub` is `true`.
+- `ghcr_username` / `ghcr_token`: Optional for `ghcr.io` tags. Defaults to `github.actor` / `GITHUB_TOKEN`.
+- `aws_access_key_id` / `aws_secret_access_key`: Required when `login_to_ecr` is `true`.
+
+**Outputs:**
+
+- `digest`: Published image digest from `docker/build-push-action`.
+
+**What it does:**
+
+1. Checks out the calling repository
+2. Logs in to Docker Hub and/or Amazon ECR as requested, and logs in to GHCR when `ghcr.io` tags are present
+3. Builds and pushes the configured image tags
+4. Installs cosign when `cosign` is enabled
+5. Signs each unique image repository by digest, e.g. `repo/image@sha256:...`
+
+</details>
+
+<details>
 <summary><strong>Publish Draft Release</strong></summary>
 
 Flips an existing draft release to published at the end of a build pipeline once all artifacts have been uploaded.
