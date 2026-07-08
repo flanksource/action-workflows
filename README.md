@@ -166,11 +166,13 @@ jobs:
 
 **What it does:**
 
-1. Checks out the calling repository
-2. Logs in to Docker Hub and/or Amazon ECR as requested, and logs in to GHCR when `ghcr.io` tags are present
-3. Builds and pushes the configured image tags
-4. Installs cosign when `cosign` is enabled
-5. Signs each unique image repository by digest, e.g. `repo/image@sha256:...`
+1. Hardens the runner with `step-security/harden-runner` in audit mode
+2. Frees disk space on the hosted runner
+3. Checks out the calling repository
+4. Logs in to Docker Hub and/or Amazon ECR as requested, and logs in to GHCR when `ghcr.io` tags are present
+5. Builds and pushes the configured image tags
+6. Installs cosign when `cosign` is enabled
+7. Signs each unique image repository by digest, e.g. `repo/image@sha256:...`
 
 </details>
 
