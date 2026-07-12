@@ -30,6 +30,31 @@ name: Publish Docker Image
         required: false
         type: string
         default: ""
+      buildx_driver:
+        description: Docker Buildx driver to use.
+        required: false
+        type: string
+        default: docker-container
+      buildx_endpoint:
+        description: Docker Buildx endpoint. Required for cloud builders.
+        required: false
+        type: string
+        default: ""
+      buildx_install:
+        description: Set the configured Buildx builder as the default builder.
+        required: false
+        type: boolean
+        default: false
+      cache_from:
+        description: Docker Buildx cache import configuration. Set to an empty string to disable.
+        required: false
+        type: string
+        default: type=gha
+      cache_to:
+        description: Docker Buildx cache export configuration. Set to an empty string to disable.
+        required: false
+        type: string
+        default: type=gha,mode=min
       cosign:
         description: Sign pushed image digests using cosign keyless.
         required: false
@@ -113,15 +138,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
-
       - name: Log in to Docker Hub
         if: inputs.login_to_dockerhub
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           username: ${{ secrets.docker_username }}
           password: ${{ secrets.docker_password }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        with:
+          driver: ${{ inputs.buildx_driver }}
+          endpoint: ${{ inputs.buildx_endpoint }}
+          install: ${{ inputs.buildx_install }}
 
       - name: Log in to GHCR
         if: contains(inputs.image_tags, 'ghcr.io/')
@@ -155,8 +184,8 @@ jobs:
           push: true
           tags: ${{ inputs.image_tags }}
           build-args: ${{ inputs.build_args }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: ${{ inputs.cache_from }}
+          cache-to: ${{ inputs.cache_to }}
 
       - name: Install cosign
         if: inputs.cosign
