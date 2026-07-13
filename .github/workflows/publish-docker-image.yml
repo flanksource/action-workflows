@@ -99,6 +99,9 @@ name: Publish Docker Image
       ghcr_token:
         description: GHCR token. Defaults to GITHUB_TOKEN when omitted.
         required: false
+      github_token:
+        description: GitHub token exposed to Docker builds as the GITHUB_TOKEN BuildKit secret.
+        required: false
     outputs:
       digest:
         description: Published image digest from docker/build-push-action.
@@ -184,6 +187,8 @@ jobs:
           push: true
           tags: ${{ inputs.image_tags }}
           build-args: ${{ inputs.build_args }}
+          secrets: |
+            GITHUB_TOKEN=${{ secrets.github_token || github.token }}
           cache-from: ${{ inputs.cache_from }}
           cache-to: ${{ inputs.cache_to }}
 
