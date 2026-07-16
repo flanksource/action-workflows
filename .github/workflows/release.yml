@@ -1,0 +1,42 @@
+---
+name: Release
+
+"on":
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Create semantic release
+        id: semantic
+        uses: cycjimmy/semantic-release-action@16ca923e6ccbb50770c415a0ccd43709a8c5f7a4 # v4.2.2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Update major version tag
+        if: steps.semantic.outputs.new_release_published == 'true'
+        env:
+          RELEASE_SHA: ${{ steps.semantic.outputs.new_release_git_head }}
+          VERSION: ${{ steps.semantic.outputs.new_release_version }}
+        run: |
+          major_tag="v${VERSION%%.*}"
+          git tag --force "$major_tag" "$RELEASE_SHA"
+          git push origin "refs/tags/$major_tag" --force

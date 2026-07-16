@@ -2,6 +2,10 @@
 
 Reusable GitHub Actions workflows for Flanksource projects.
 
+## Versioning
+
+Workflows are published as semantic versions. Use the major-version tag (for example, `@v1`) to receive compatible updates, or pin a full release tag (for example, `@v1.0.0`) for a fixed version. Do not pin workflows to the default branch.
+
 ## Workflows
 
 <details>
@@ -27,7 +31,7 @@ jobs:
 
   push-helm-chart:
     needs: helm-package
-    uses: flanksource/action-workflows/.github/workflows/push-helm-chart.yml@main
+    uses: flanksource/action-workflows/.github/workflows/push-helm-chart.yml@v1
     with:
       filename_regex: "flanksource-ui-*.tgz"
       version: "1.4.180"
@@ -70,7 +74,7 @@ Computes the next semantic version from commits using [`semantic-release`](https
 ```yaml
 jobs:
   create-release:
-    uses: flanksource/action-workflows/.github/workflows/create-release.yml@main
+    uses: flanksource/action-workflows/.github/workflows/create-release.yml@v1
     with:
       extra_plugins: |
         @semantic-release/git
@@ -117,7 +121,7 @@ Builds and pushes Docker images with [`docker/build-push-action`](https://github
 ```yaml
 jobs:
   docker:
-    uses: flanksource/action-workflows/.github/workflows/publish-docker-image.yml@main
+    uses: flanksource/action-workflows/.github/workflows/publish-docker-image.yml@v1
     permissions:
       contents: read
       id-token: write
@@ -187,7 +191,7 @@ Flips an existing draft release to published at the end of a build pipeline once
 jobs:
   publish:
     needs: [create-release, build]
-    uses: flanksource/action-workflows/.github/workflows/publish-release.yml@main
+    uses: flanksource/action-workflows/.github/workflows/publish-release.yml@v1
     with:
       tag: ${{ needs.create-release.outputs.tag }}
     secrets:
