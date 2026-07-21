@@ -1,0 +1,172 @@
+---
+# Free Disk Space
+#
+# Reclaims the preinstalled toolchains a hosted Ubuntu runner ships with, so
+# image builds are not competing with ~25GB of SDKs no build here uses. A
+# hosted runner leaves only ~14-21GB free on /, which is where /var/lib/docker
+# lives — a multi-stage build with a mode=max layer-cache export runs out.
+#
+# Derived from jlumbroso/free-disk-space (MIT), with four changes:
+#   1. Inputs reach the script through env: rather than being templated into
+#      the bash body, so a caller cannot inject shell.
+#   2. Removals run concurrently — serially they cost ~2min, together ~30-45s.
+#   3. Free space is measured on / alone; upstream sums `df -a` across every
+#      mount, mixing in /mnt and overlay mounts.
+#   4. No blanket `|| true`. `rm -rf` on an absent path already exits 0, so
+#      swallowing errors only hides real failures. This matters on
+#      ubuntu-*-arm runners, where most of these paths simply do not exist and
+#      the step is expected to no-op rather than fail.
+#
+# The slow/destructive categories (apt purges, docker image pruning, wiping the
+# whole tool cache, swap) default to false — opt in when a build needs them.
+
+name: Free Disk Space
+description: >-
+  Reclaim disk space on a hosted Ubuntu runner by removing preinstalled
+  toolchains (Android SDK, .NET, Haskell, Boost, CodeQL) that most builds
+  never use.
+
+branding:
+  icon: trash-2
+  color: green
+
+inputs:
+  android:
+    description: Remove the Android SDK/NDK (/usr/local/lib/android, ~9-12GB).
+    required: false
+    default: "true"
+  dotnet:
+    description: Remove the .NET runtime (/usr/share/dotnet, ~1.6-2.9GB).
+    required: false
+    default: "true"
+  haskell:
+    description: Remove GHC and ghcup (/opt/ghc, /usr/local/.ghcup, ~5GB).
+    required: false
+    default: "true"
+  boost:
+    description: Remove prebuilt Boost (/usr/local/share/boost, ~1GB).
+    required: false
+    default: "true"
+  codeql:
+    description: >-
+      Remove the CodeQL bundle (/opt/hostedtoolcache/CodeQL, ~5GB). Targeted
+      rather than wiping the whole tool cache — see tool-cache.
+    required: false
+    default: "true"
+  large-packages:
+    description: >-
+      Remove large apt packages (aspnetcore, dotnet, llvm, php, mongodb, mysql,
+      azure-cli, browsers). Off by default: costs 2-3min for space the
+      directory removals above largely already reclaim.
+    required: false
+    default: "false"
+  docker-images:
+    description: >-
+      Prune all preloaded Docker images. Off by default: it discards base
+      layers a build may otherwise reuse.
+    required: false
+    default: "false"
+  tool-cache:
+    description: >-
+      Remove the entire hosted tool cache ($AGENT_TOOLSDIRECTORY, ~8GB). Off by
+      default: it breaks any setup-* action that ran, or runs, in the same job.
+    required: false
+    default: "false"
+  swap-storage:
+    description: >-
+      Disable swap and remove /mnt/swapfile. Off by default: it frees /mnt, not
+      /, so it does nothing for /var/lib/docker while costing memory headroom.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Free disk space
+      shell: bash
+      env:
+        INPUT_ANDROID: ${{ inputs.android }}
+        INPUT_DOTNET: ${{ inputs.dotnet }}
+        INPUT_HASKELL: ${{ inputs.haskell }}
+        INPUT_BOOST: ${{ inputs.boost }}
+        INPUT_CODEQL: ${{ inputs.codeql }}
+        INPUT_LARGE_PACKAGES: ${{ inputs.large-packages }}
+        INPUT_DOCKER_IMAGES: ${{ inputs.docker-images }}
+        INPUT_TOOL_CACHE: ${{ inputs.tool-cache }}
+        INPUT_SWAP_STORAGE: ${{ inputs.swap-storage }}
+      run: |
+        set -euo pipefail
+
+        # Available KiB on / — the filesystem holding /var/lib/docker, which is
+        # the constraint. Other mounts (/mnt, overlays) are noise here.
+        avail_kib() { df --output=avail -k / | tail -1 | tr -d ' '; }
+        human() { numfmt --to=iec-i --suffix=B "$(($1 * 1024))"; }
+
+        before=$(avail_kib)
+        echo "Before:"
+        df -h /
+
+        # Each category is removed in its own background job; a full serial
+        # pass is dominated by the Android SDK's file count.
+        pids=()
+        remove() {
+          local enabled=$1
+          shift
+          [ "$enabled" = "true" ] || return 0
+          echo "  removing: $*"
+          sudo rm -rf "$@" &
+          pids+=($!)
+        }
+
+        remove "$INPUT_ANDROID" /usr/local/lib/android
+        remove "$INPUT_DOTNET" /usr/share/dotnet
+        remove "$INPUT_HASKELL" /opt/ghc /usr/local/.ghcup
+        remove "$INPUT_BOOST" /usr/local/share/boost
+
+        if [ "$INPUT_TOOL_CACHE" = "true" ]; then
+          remove true "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}"
+        else
+          # Only meaningful when the whole cache is being kept; removing both
+          # concurrently races two rm walks over the same tree.
+          remove "$INPUT_CODEQL" /opt/hostedtoolcache/CodeQL
+        fi
+
+        # Fail the step if a removal genuinely errored — an absent path is not
+        # an error, so anything reaching here is a real problem.
+        for pid in ${pids[@]+"${pids[@]}"}; do
+          wait "$pid"
+        done
+
+        if [ "$INPUT_LARGE_PACKAGES" = "true" ]; then
+          echo "  removing: large apt packages"
+          sudo apt-get remove -y --fix-missing \
+            '^aspnetcore-.*' '^dotnet-.*' '^llvm-.*' 'php.*' \
+            '^mongodb-.*' '^mysql-.*' \
+            azure-cli google-chrome-stable firefox powershell mono-devel
+          sudo apt-get autoremove -y
+          sudo apt-get clean
+        fi
+
+        if [ "$INPUT_DOCKER_IMAGES" = "true" ]; then
+          echo "  removing: docker images"
+          sudo docker image prune --all --force
+        fi
+
+        if [ "$INPUT_SWAP_STORAGE" = "true" ]; then
+          echo "  removing: swap storage"
+          sudo swapoff -a
+          sudo rm -f /mnt/swapfile
+        fi
+
+        after=$(avail_kib)
+        echo "After:"
+        df -h /
+
+        freed=$((after - before))
+        echo "Freed $(human "$freed") on / ($(human "$before") -> $(human "$after") available)"
+
+        {
+          echo "### Free disk space"
+          echo
+          echo "Reclaimed **$(human "$freed")** on \`/\` — $(human "$before") → $(human "$after") available."
+        } >> "$GITHUB_STEP_SUMMARY"
