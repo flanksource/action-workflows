@@ -1,10 +1,72 @@
 # action-workflows
 
-Reusable GitHub Actions workflows for Flanksource projects.
+Reusable GitHub Actions workflows and composite actions for Flanksource projects.
 
 ## Versioning
 
-Workflows are published as semantic versions. Use the major-version tag (for example, `@v1`) to receive compatible updates, or pin a full release tag (for example, `@v1.0.0`) for a fixed version. Do not pin workflows to the default branch.
+Workflows and actions are published as semantic versions. Use the major-version tag (for example, `@v1`) to receive compatible updates, or pin a full release tag (for example, `@v1.0.0`) for a fixed version. Do not pin to the default branch.
+
+## Actions
+
+<details>
+<summary><strong>Free Disk Space</strong></summary>
+
+A composite action that reclaims the preinstalled toolchains a hosted Ubuntu runner ships with. A hosted runner leaves only ~14–21 GB free on `/` — which is where `/var/lib/docker` lives — so a multi-stage image build that also exports a `mode=max` layer cache can run out of space.
+
+Derived from [`jlumbroso/free-disk-space`](https://github.com/jlumbroso/free-disk-space) (MIT), with inputs passed through `env:` instead of being templated into the script body, concurrent removals, free space measured on `/` alone, and no blanket `|| true`.
+
+**Usage:**
+
+```yaml
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: flanksource/action-workflows/actions/free-disk-space@v1
+
+      - uses: actions/checkout@v4
+      # ... docker build ...
+```
+
+Opt in to the slower or more destructive categories when a build needs them:
+
+```yaml
+      - uses: flanksource/action-workflows/actions/free-disk-space@v1
+        with:
+          docker-images: true
+          tool-cache: true
+```
+
+**Inputs:**
+
+| Input | Default | Removes |
+| --- | --- | --- |
+| `android` | `true` | `/usr/local/lib/android` (~9–12 GB) |
+| `dotnet` | `true` | `/usr/share/dotnet` (~1.6–2.9 GB) |
+| `haskell` | `true` | `/opt/ghc`, `/usr/local/.ghcup` (~5 GB) |
+| `boost` | `true` | `/usr/local/share/boost` (~1 GB) |
+| `codeql` | `true` | `/opt/hostedtoolcache/CodeQL` (~5 GB) |
+| `large-packages` | `false` | Large apt packages — costs 2–3 min |
+| `docker-images` | `false` | All preloaded Docker images |
+| `tool-cache` | `false` | The whole `$AGENT_TOOLSDIRECTORY` (~8 GB) |
+| `swap-storage` | `false` | Swap and `/mnt/swapfile` |
+
+With the defaults this reclaims roughly 20–25 GB on `ubuntu-latest` in ~30–45 s.
+
+**What it does:**
+
+1. Records available space on `/`
+2. Removes each enabled category concurrently, failing the step if a removal genuinely errors
+3. Applies the opt-in apt / Docker / swap categories
+4. Reports space reclaimed to the log and the job summary
+
+**Notes:**
+
+- On `ubuntu-*-arm` runners most of these paths do not exist. `rm -rf` no-ops on an absent path, so the action is safe there and simply reports a smaller delta — no architecture conditional is needed.
+- `codeql` is ignored when `tool-cache` is enabled, since the tool cache already contains it.
+- `tool-cache` removes the directory `setup-go`, `setup-node`, and friends install into. Only enable it in a job that runs no `setup-*` action.
+
+</details>
 
 ## Workflows
 
