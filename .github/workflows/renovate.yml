@@ -1,0 +1,71 @@
+name: Renovate
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Avoid the busiest part of the hour for GitHub-hosted runners.
+    - cron: "17 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+env:
+  cache_dir: /tmp/renovate/cache/renovate/repository
+  cache_key: renovate-repository-cache
+
+jobs:
+  renovate:
+    name: Renovate
+    runs-on: ubuntu-latest
+    # GitHub App installation tokens expire after one hour.
+    timeout-minutes: 55
+
+    steps:
+      - name: Create organization installation token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.FLANKSOURCE_APP_ID }}
+          private-key: ${{ secrets.FLANKSOURCE_APP_SECRET }}
+          # Omitting `repositories` scopes the token to every repository in the
+          # Flanksource organization installation.
+          owner: ${{ github.repository_owner }}
+
+      - name: Check out central configuration
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Restore Renovate repository cache
+        id: cache-restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.cache_dir }}
+          key: ${{ env.cache_key }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ env.cache_key }}-
+
+      - name: Fix restored cache ownership
+        if: steps.cache-restore.outputs.cache-matched-key != ''
+        run: sudo chown -R 12021:0 /tmp/renovate
+
+      - name: Run Renovate
+        uses: renovatebot/github-action@22e0a16091fc706b04affe6ae53d5e3358ac4023 # v46.1.19
+        with:
+          configurationFile: renovate-config.js
+          renovate-version: 43.265.1
+          token: ${{ steps.app-token.outputs.token }}
+        env:
+          LOG_LEVEL: info
+          RENOVATE_REPOSITORY_CACHE: enabled
+
+      - name: Save Renovate repository cache
+        if: success() && steps.cache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.cache_dir }}
+          key: ${{ env.cache_key }}-${{ github.run_id }}-${{ github.run_attempt }}
