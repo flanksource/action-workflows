@@ -46,5 +46,23 @@ module.exports = {
       matchSourceUrls: ["https://github.com/flanksource/**"],
       enabled: true,
     },
+    {
+      description: "Group non-major Go module updates",
+      matchManagers: ["gomod"],
+      matchUpdateTypes: ["minor", "patch", "digest"],
+      groupName: "Flanksource Go dependencies",
+    },
+    {
+      description: "Group non-major JavaScript dependency updates",
+      matchManagers: ["npm"],
+      matchUpdateTypes: ["minor", "patch", "digest"],
+      groupName: "Flanksource JavaScript dependencies",
+    },
+    {
+      description: "Group non-major GitHub Actions updates",
+      matchManagers: ["github-actions"],
+      matchUpdateTypes: ["minor", "patch", "digest"],
+      groupName: "Flanksource GitHub Actions",
+    },
   ],
 };
