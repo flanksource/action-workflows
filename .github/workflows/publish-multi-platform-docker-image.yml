@@ -466,27 +466,32 @@ jobs:
 
           : > "$PUBLISHED_IMAGES_FILE"
           output_digest=
+          repository_index=0
           for repository in "${repositories[@]}"; do
-            create_args=(docker buildx imagetools create)
-            first_tag=
+            metadata_file="$RUNNER_TEMP/manifest-$repository_index.json"
+            create_args=(
+              docker buildx imagetools create
+              --metadata-file "$metadata_file"
+            )
             while IFS= read -r tag; do
               [ -n "$tag" ] || continue
               create_args+=(--tag "$tag")
-              if [[ -z "$first_tag" ]]; then
-                first_tag=$tag
-              fi
             done <<< "${repository_tags[$repository]}"
             for digest in "${digests[@]}"; do
               create_args+=("$repository@sha256:$digest")
             done
 
             "${create_args[@]}"
-            manifest=$(docker buildx imagetools inspect "$first_tag" --format '{{json .Manifest}}')
-            digest=$(jq -er '.digest | select(startswith("sha256:"))' <<< "$manifest")
+            digest=$(jq -er '
+              ."containerimage.descriptor".digest
+              | select(test("^sha256:[0-9a-f]{64}$"))
+            ' "$metadata_file")
+            docker buildx imagetools inspect "$repository@$digest"
             echo "$repository@$digest" >> "$PUBLISHED_IMAGES_FILE"
             if [[ -z "$output_digest" ]]; then
               output_digest=$digest
             fi
+            repository_index=$((repository_index + 1))
           done
 
           [ -n "$output_digest" ] || { echo "no manifest list was created" >&2; exit 1; }
