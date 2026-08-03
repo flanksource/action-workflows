@@ -1,0 +1,509 @@
+---
+# Each platform is built on a matching native runner and pushed by digest. Tags
+# are published only after every platform succeeds, so consumers never observe
+# a partially assembled multi-platform image.
+name: Publish Multi-Platform Docker Image
+
+"on":
+  workflow_call:
+    inputs:
+      image_tags:
+        description: >-
+          Newline-separated full image tags to publish
+          (e.g., docker.io/flanksource/config-db:v1.2.3).
+        required: true
+        type: string
+      dockerfile:
+        description: Path to the Dockerfile.
+        required: false
+        type: string
+        default: Dockerfile
+      context:
+        description: Docker build context.
+        required: false
+        type: string
+        default: .
+      platforms:
+        description: >-
+          Comma-separated target platforms. Supported values are linux/amd64
+          and linux/arm64.
+        required: false
+        type: string
+        default: linux/amd64,linux/arm64
+      amd64_runner:
+        description: GitHub Actions runner for linux/amd64.
+        required: false
+        type: string
+        default: ubuntu-latest
+      arm64_runner:
+        description: GitHub Actions runner for linux/arm64.
+        required: false
+        type: string
+        default: ubuntu-24.04-arm
+      build_args:
+        description: Newline-separated Docker build args.
+        required: false
+        type: string
+        default: ""
+      cache:
+        description: Use architecture-scoped GitHub Actions build caches.
+        required: false
+        type: boolean
+        default: true
+      cache_mode:
+        description: BuildKit cache export mode (min or max).
+        required: false
+        type: string
+        default: min
+      cache_scope:
+        description: >-
+          Base cache scope. Defaults to a value derived from the first image
+          repository; the architecture is always appended.
+        required: false
+        type: string
+        default: ""
+      cosign:
+        description: Sign each pushed image index using cosign keyless.
+        required: false
+        type: boolean
+        default: true
+      login_to_dockerhub:
+        description: Log in to Docker Hub before publishing.
+        required: false
+        type: boolean
+        default: true
+      login_to_ecr:
+        description: Log in to Amazon ECR before publishing.
+        required: false
+        type: boolean
+        default: false
+      ecr_registry_type:
+        description: 'Amazon ECR registry type: private or public.'
+        required: false
+        type: string
+        default: public
+      aws_region:
+        description: AWS region used for ECR login.
+        required: false
+        type: string
+        default: us-east-1
+    secrets:
+      docker_username:
+        description: Docker Hub username. Required when login_to_dockerhub is true.
+        required: false
+      docker_password:
+        description: Docker Hub password/token. Required when login_to_dockerhub is true.
+        required: false
+      aws_access_key_id:
+        description: AWS access key ID. Required when login_to_ecr is true.
+        required: false
+      aws_secret_access_key:
+        description: AWS secret access key. Required when login_to_ecr is true.
+        required: false
+      ghcr_username:
+        description: GHCR username. Defaults to github.actor when omitted.
+        required: false
+      ghcr_token:
+        description: GHCR token. Defaults to GITHUB_TOKEN when omitted.
+        required: false
+      token:
+        description: GitHub token exposed to Docker builds as the GITHUB_TOKEN BuildKit secret.
+        required: false
+    outputs:
+      digest:
+        description: Published multi-platform digest for the first image repository.
+        value: ${{ jobs.merge.outputs.digest }}
+
+permissions: {}
+
+jobs:
+  prepare:
+    name: Prepare Docker build
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      artifact-key: ${{ steps.prepare.outputs.artifact-key }}
+      cache-scope: ${{ steps.prepare.outputs.cache-scope }}
+      matrix: ${{ steps.prepare.outputs.matrix }}
+      platform-count: ${{ steps.prepare.outputs.platform-count }}
+      repositories: ${{ steps.prepare.outputs.repositories }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - name: Prepare matrix and image repositories
+        id: prepare
+        shell: bash
+        env:
+          AMD64_RUNNER: ${{ inputs.amd64_runner }}
+          ARM64_RUNNER: ${{ inputs.arm64_runner }}
+          CACHE_MODE: ${{ inputs.cache_mode }}
+          CACHE_SCOPE: ${{ inputs.cache_scope }}
+          IMAGE_TAGS: ${{ inputs.image_tags }}
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          set -euo pipefail
+
+          trim() {
+            local value=$1
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            printf '%s' "$value"
+          }
+
+          case "$CACHE_MODE" in
+            min|max) ;;
+            *) echo "cache_mode must be min or max: $CACHE_MODE" >&2; exit 1 ;;
+          esac
+
+          declare -A seen_platforms=()
+          matrix_entries=()
+          while IFS= read -r raw_platform; do
+            platform=$(trim "${raw_platform//$'\r'/}")
+            [ -n "$platform" ] || continue
+            if [[ -n "${seen_platforms[$platform]-}" ]]; then
+              echo "duplicate platform: $platform" >&2
+              exit 1
+            fi
+            seen_platforms["$platform"]=1
+
+            case "$platform" in
+              linux/amd64)
+                arch=amd64
+                runner=$AMD64_RUNNER
+                ;;
+              linux/arm64)
+                arch=arm64
+                runner=$ARM64_RUNNER
+                ;;
+              *)
+                echo "unsupported platform: $platform" >&2
+                exit 1
+                ;;
+            esac
+            [ -n "$runner" ] || { echo "runner is empty for $platform" >&2; exit 1; }
+
+            matrix_entries+=("$(jq -cn \
+              --arg platform "$platform" \
+              --arg arch "$arch" \
+              --arg runner "$runner" \
+              '{platform: $platform, arch: $arch, runner: $runner}')")
+          done < <(printf '%s\n' "$PLATFORMS" | tr ',' '\n')
+
+          if ((${#matrix_entries[@]} == 0)); then
+            echo "at least one platform is required" >&2
+            exit 1
+          fi
+
+          declare -A seen_repositories=()
+          repositories=()
+          while IFS= read -r raw_tag; do
+            tag=$(trim "${raw_tag//$'\r'/}")
+            [ -n "$tag" ] || continue
+            leaf=${tag##*/}
+            if [[ "$tag" == *@* || "$leaf" != *:* ]]; then
+              echo "image tag must include an explicit tag: $tag" >&2
+              exit 1
+            fi
+
+            repository=${tag%:*}
+            if [[ -z "$repository" || "$repository" == "$tag" ]]; then
+              echo "invalid image tag: $tag" >&2
+              exit 1
+            fi
+            if [[ -z "${seen_repositories[$repository]-}" ]]; then
+              seen_repositories["$repository"]=1
+              repositories+=("$repository")
+            fi
+          done < <(printf '%s\n' "$IMAGE_TAGS" | tr ',' '\n')
+
+          if ((${#repositories[@]} == 0)); then
+            echo "at least one image tag is required" >&2
+            exit 1
+          fi
+
+          matrix=$(printf '%s\n' "${matrix_entries[@]}" | jq -sc '{include: .}')
+          repositories_csv=$(IFS=,; printf '%s' "${repositories[*]}")
+          artifact_key=$(printf '%s' "$IMAGE_TAGS" | sha256sum | cut -c1-12)
+          repository_key=$(printf '%s' "${repositories[0]}" | sha256sum | cut -c1-12)
+          cache_scope=$CACHE_SCOPE
+          if [[ -z "$cache_scope" ]]; then
+            cache_scope="docker-$repository_key"
+          fi
+          if [[ "$cache_scope" == *","* || "$cache_scope" == *$'\n'* ]]; then
+            echo "cache_scope cannot contain commas or newlines" >&2
+            exit 1
+          fi
+
+          {
+            echo "artifact-key=$artifact_key"
+            echo "cache-scope=$cache_scope"
+            echo "matrix=$matrix"
+            echo "platform-count=${#matrix_entries[@]}"
+            echo "repositories=$repositories_csv"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Docker image (${{ matrix.platform }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write # push platform manifests to GHCR
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - name: Free disk space
+        uses: flanksource/action-workflows/actions/free-disk-space@463987800d76b217c6005367f98e39dd0dd3acac # v1.1.0
+
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Log in to Docker Hub
+        if: inputs.login_to_dockerhub
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          username: ${{ secrets.docker_username }}
+          password: ${{ secrets.docker_password }}
+
+      - name: Log in to GHCR
+        if: contains(inputs.image_tags, 'ghcr.io/')
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.ghcr_username || github.actor }}
+          password: ${{ secrets.ghcr_token || github.token }}
+
+      - name: Configure AWS Credentials
+        if: inputs.login_to_ecr
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          aws-access-key-id: ${{ secrets.aws_access_key_id }}
+          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Log in to Amazon ECR
+        if: inputs.login_to_ecr
+        uses: aws-actions/amazon-ecr-login@376925c9d111252e87ae59691e5a442dd100ef6a # v2.1.3
+        with:
+          registry-type: ${{ inputs.ecr_registry_type }}
+
+      - name: Prepare build cache
+        id: cache
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          CACHE_ENABLED: ${{ inputs.cache }}
+          CACHE_MODE: ${{ inputs.cache_mode }}
+          CACHE_SCOPE: ${{ needs.prepare.outputs.cache-scope }}
+        run: |
+          if [[ "$CACHE_ENABLED" == "true" ]]; then
+            echo "from=type=gha,scope=$CACHE_SCOPE-$ARCH" >> "$GITHUB_OUTPUT"
+            echo "to=type=gha,scope=$CACHE_SCOPE-$ARCH,mode=$CACHE_MODE,ignore-error=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "from=" >> "$GITHUB_OUTPUT"
+            echo "to=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,"name=${{ needs.prepare.outputs.repositories }}",oci-artifact=true,push-by-digest=true,name-canonical=true,push=true
+          build-args: ${{ inputs.build_args }}
+          secrets: |
+            GITHUB_TOKEN=${{ secrets.token || github.token }}
+          cache-from: ${{ steps.cache.outputs.from }}
+          cache-to: ${{ steps.cache.outputs.to }}
+
+      - name: Export digest
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "docker/build-push-action returned an invalid digest: $DIGEST" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docker-digests-${{ needs.prepare.outputs.artifact-key }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Merge multi-platform image
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # keyless cosign signatures
+      packages: write # publish multi-platform indexes to GHCR
+    outputs:
+      digest: ${{ steps.manifest.outputs.digest }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - name: Download digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: docker-digests-${{ needs.prepare.outputs.artifact-key }}-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Log in to Docker Hub
+        if: inputs.login_to_dockerhub
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          username: ${{ secrets.docker_username }}
+          password: ${{ secrets.docker_password }}
+
+      - name: Log in to GHCR
+        if: contains(inputs.image_tags, 'ghcr.io/')
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.ghcr_username || github.actor }}
+          password: ${{ secrets.ghcr_token || github.token }}
+
+      - name: Configure AWS Credentials
+        if: inputs.login_to_ecr
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          aws-access-key-id: ${{ secrets.aws_access_key_id }}
+          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Log in to Amazon ECR
+        if: inputs.login_to_ecr
+        uses: aws-actions/amazon-ecr-login@376925c9d111252e87ae59691e5a442dd100ef6a # v2.1.3
+        with:
+          registry-type: ${{ inputs.ecr_registry_type }}
+
+      - name: Create and push manifest lists
+        id: manifest
+        shell: bash
+        env:
+          DIGEST_DIR: ${{ runner.temp }}/digests
+          EXPECTED_PLATFORM_COUNT: ${{ needs.prepare.outputs.platform-count }}
+          IMAGE_TAGS: ${{ inputs.image_tags }}
+          PUBLISHED_IMAGES_FILE: ${{ runner.temp }}/published-images
+        run: |
+          set -euo pipefail
+
+          trim() {
+            local value=$1
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            printf '%s' "$value"
+          }
+
+          declare -A seen_repositories=()
+          declare -A seen_tags=()
+          declare -A repository_tags=()
+          repositories=()
+          while IFS= read -r raw_tag; do
+            tag=$(trim "${raw_tag//$'\r'/}")
+            [ -n "$tag" ] || continue
+            leaf=${tag##*/}
+            if [[ "$tag" == *@* || "$leaf" != *:* ]]; then
+              echo "image tag must include an explicit tag: $tag" >&2
+              exit 1
+            fi
+            [[ -z "${seen_tags[$tag]-}" ]] || continue
+            seen_tags["$tag"]=1
+
+            repository=${tag%:*}
+            if [[ -z "${seen_repositories[$repository]-}" ]]; then
+              seen_repositories["$repository"]=1
+              repositories+=("$repository")
+            fi
+            if [[ -n "${repository_tags[$repository]-}" ]]; then
+              repository_tags["$repository"]+=$'\n'
+            fi
+            repository_tags["$repository"]+="$tag"
+          done < <(printf '%s\n' "$IMAGE_TAGS" | tr ',' '\n')
+
+          mapfile -t digests < <(find "$DIGEST_DIR" -maxdepth 1 -type f -printf '%f\n' | sort)
+          if ((${#digests[@]} != EXPECTED_PLATFORM_COUNT)); then
+            echo "expected $EXPECTED_PLATFORM_COUNT platform digests, found ${#digests[@]}" >&2
+            exit 1
+          fi
+          for digest in "${digests[@]}"; do
+            if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "invalid platform digest: $digest" >&2
+              exit 1
+            fi
+          done
+
+          : > "$PUBLISHED_IMAGES_FILE"
+          output_digest=
+          for repository in "${repositories[@]}"; do
+            create_args=(docker buildx imagetools create)
+            first_tag=
+            while IFS= read -r tag; do
+              [ -n "$tag" ] || continue
+              create_args+=(--tag "$tag")
+              if [[ -z "$first_tag" ]]; then
+                first_tag=$tag
+              fi
+            done <<< "${repository_tags[$repository]}"
+            for digest in "${digests[@]}"; do
+              create_args+=("$repository@sha256:$digest")
+            done
+
+            "${create_args[@]}"
+            manifest=$(docker buildx imagetools inspect "$first_tag" --format '{{json .Manifest}}')
+            digest=$(jq -er '.digest | select(startswith("sha256:"))' <<< "$manifest")
+            echo "$repository@$digest" >> "$PUBLISHED_IMAGES_FILE"
+            if [[ -z "$output_digest" ]]; then
+              output_digest=$digest
+            fi
+          done
+
+          [ -n "$output_digest" ] || { echo "no manifest list was created" >&2; exit 1; }
+          echo "digest=$output_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        if: inputs.cosign
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+
+      - name: Sign image indexes
+        if: inputs.cosign
+        shell: bash
+        env:
+          PUBLISHED_IMAGES_FILE: ${{ runner.temp }}/published-images
+        run: |
+          set -euo pipefail
+          while IFS= read -r reference; do
+            [ -n "$reference" ] || continue
+            cosign sign --yes "$reference"
+          done < "$PUBLISHED_IMAGES_FILE"

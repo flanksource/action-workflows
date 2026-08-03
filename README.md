@@ -226,7 +226,7 @@ jobs:
 <details>
 <summary><strong>Publish Docker Image</strong></summary>
 
-Builds and pushes Docker images with [`docker/build-push-action`](https://github.com/docker/build-push-action). Optionally signs the pushed image digest using cosign keyless signing through GitHub Actions OIDC. Cosign signing is enabled by default.
+Builds and pushes Docker images with [`docker/build-push-action`](https://github.com/docker/build-push-action) on one builder. Optionally signs the pushed image digest using cosign keyless signing through GitHub Actions OIDC. Cosign signing is enabled by default. Use **Publish Multi-Platform Docker Image** below when each platform should build on a separate native runner.
 
 **Usage:**
 
@@ -289,6 +289,79 @@ jobs:
 5. Builds and pushes the configured image tags
 6. Installs cosign when `cosign` is enabled
 7. Signs each unique image repository by digest, e.g. `repo/image@sha256:...`
+
+</details>
+
+<details>
+<summary><strong>Publish Multi-Platform Docker Image</strong></summary>
+
+Builds each target platform independently on a matching native GitHub-hosted runner. Platform images are pushed by digest, then a final job creates and signs the tagged multi-platform image indexes. Tags are not published until every platform build succeeds.
+
+Use this workflow for native `linux/amd64` and `linux/arm64` builds. Use **Publish Docker Image** when a single multi-platform builder such as Docker Build Cloud should own the complete build.
+
+**Usage:**
+
+```yaml
+jobs:
+  docker:
+    uses: flanksource/action-workflows/.github/workflows/publish-multi-platform-docker-image.yml@v1
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    with:
+      dockerfile: build/Dockerfile
+      image_tags: |
+        docker.io/flanksource/config-db:v1.2.3
+        docker.io/flanksource/config-db:latest
+        public.ecr.aws/k4y9r6y5/config-db:v1.2.3
+      login_to_ecr: true
+      ecr_registry_type: public
+    secrets:
+      docker_username: ${{ secrets.DOCKER_USERNAME }}
+      docker_password: ${{ secrets.DOCKER_PASSWORD }}
+      aws_access_key_id: ${{ secrets.ECR_AWS_ACCESS_KEY }}
+      aws_secret_access_key: ${{ secrets.ECR_AWS_SECRET_ACCESS_KEY }}
+```
+
+**Inputs:**
+
+- `image_tags` (required): Newline-separated full image tags to publish. Every value must include an explicit tag.
+- `dockerfile` (optional, default: `Dockerfile`): Path to the Dockerfile.
+- `context` (optional, default: `.`): Docker build context.
+- `platforms` (optional, default: `linux/amd64,linux/arm64`): Comma-separated platforms. Supported values are `linux/amd64` and `linux/arm64`.
+- `amd64_runner` (optional, default: `ubuntu-latest`): Runner used for `linux/amd64`.
+- `arm64_runner` (optional, default: `ubuntu-24.04-arm`): Runner used for `linux/arm64`.
+- `build_args` (optional): Newline-separated Docker build args.
+- `cache` (optional, default: `true`): Enable architecture-scoped GitHub Actions caches.
+- `cache_mode` (optional, default: `min`): BuildKit cache export mode, either `min` or `max`.
+- `cache_scope` (optional): Base cache scope. By default it is derived from the first image repository; the architecture is always appended.
+- `cosign` (optional, default: `true`): Sign each published image index using cosign keyless.
+- `login_to_dockerhub` (optional, default: `true`): Log in to Docker Hub.
+- `login_to_ecr` (optional, default: `false`): Log in to Amazon ECR.
+- `ecr_registry_type` (optional, default: `public`): Amazon ECR registry type: `public` or `private`.
+- `aws_region` (optional, default: `us-east-1`): AWS region used for ECR login.
+
+**Secrets:**
+
+- `docker_username` / `docker_password`: Required when `login_to_dockerhub` is `true`.
+- `ghcr_username` / `ghcr_token`: Optional for `ghcr.io` tags. Defaults to `github.actor` / `GITHUB_TOKEN`.
+- `aws_access_key_id` / `aws_secret_access_key`: Required when `login_to_ecr` is `true`.
+- `token`: Optional GitHub token exposed to the Docker build as the `GITHUB_TOKEN` BuildKit secret.
+
+**Outputs:**
+
+- `digest`: Published multi-platform digest for the first image repository.
+
+**What it does:**
+
+1. Validates the requested platforms and image tags
+2. Maps `linux/amd64` to `ubuntu-latest` and `linux/arm64` to `ubuntu-24.04-arm` by default
+3. Builds each platform in parallel without QEMU and pushes it by digest to every requested registry
+4. Stores BuildKit caches in separate architecture-specific scopes
+5. Downloads the platform digests only after every build succeeds
+6. Creates each repository's tagged multi-platform image index
+7. Signs each repository-specific image index digest using cosign keyless
 
 </details>
 
