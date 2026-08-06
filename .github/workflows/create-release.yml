@@ -15,8 +15,8 @@ name: Create Semantic Release
       token:
         description: >-
           GitHub token to use for checkout, git push, and GitHub release
-          operations.
-        required: true
+          operations. Defaults to the caller's GITHUB_TOKEN.
+        required: false
     outputs:
       published:
         description: >-
@@ -39,7 +39,10 @@ permissions: {}
 jobs:
   create-release:
     runs-on: ubuntu-latest
-    permissions: {}
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
     outputs:
       published: ${{ steps.semantic.outputs.new_release_published }}
       version: ${{ steps.semantic.outputs.new_release_version }}
@@ -49,7 +52,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-          token: ${{ secrets.token }}
+          token: ${{ secrets.token || github.token }}
           persist-credentials: true
 
       - name: Create release with semantic-release
@@ -58,4 +61,4 @@ jobs:
         with:
           extra_plugins: ${{ inputs.extra_plugins }}
         env:
-          GITHUB_TOKEN: ${{ secrets.token }}
+          GITHUB_TOKEN: ${{ secrets.token || github.token }}

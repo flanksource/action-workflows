@@ -186,12 +186,14 @@ Computes the next semantic version from commits using [`semantic-release`](https
 ```yaml
 jobs:
   create-release:
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
     uses: flanksource/action-workflows/.github/workflows/create-release.yml@v1
     with:
       extra_plugins: |
         @semantic-release/git
-    secrets:
-      token: ${{ secrets.FLANKBOT }}
 
   build:
     needs: create-release
@@ -208,7 +210,7 @@ jobs:
 
 **Secrets:**
 
-- `token` (required): token used for checkout, git push, and GitHub release operations.
+- `token` (optional): token used for checkout, git push, and GitHub release operations. Defaults to the caller's `GITHUB_TOKEN`; grant the calling job `contents: write` and any required issue or pull-request permissions. Pass a PAT or GitHub App token when the automatic token is unsuitable.
 
 **Outputs:**
 
