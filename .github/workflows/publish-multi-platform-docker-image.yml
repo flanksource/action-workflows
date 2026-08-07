@@ -262,7 +262,7 @@ jobs:
           egress-policy: audit
 
       - name: Free disk space
-        uses: flanksource/action-workflows/actions/free-disk-space@463987800d76b217c6005367f98e39dd0dd3acac # v1.1.0
+        uses: flanksource/action-workflows/actions/free-disk-space@f8512a65d38c1ea53d5c83a4e30ee2ae56acac6f # v1.2.1
 
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
