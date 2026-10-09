@@ -31,8 +31,14 @@ name: Push Helm Chart to flanksource/charts
       token:
         description: >-
           GitHub token with permissions to push to
-          flanksource/charts
-        required: true
+          flanksource/charts. If omitted, use the GitHub App credentials.
+        required: false
+      app_id:
+        description: GitHub App ID, required when token is omitted.
+        required: false
+      app_private_key:
+        description: GitHub App PEM private key, required when token is omitted.
+        required: false
 
 permissions: {}
 
@@ -41,11 +47,24 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BRANCH_NAME: chart-update/${{ inputs.version }}
+      CHART_TOKEN: ${{ secrets.token }}
     steps:
       - name: Download helm chart artifact
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: ${{ inputs.artifact_name }}
+
+      - name: Create charts installation token
+        if: env.CHART_TOKEN == ''
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.app_id }}
+          private-key: ${{ secrets.app_private_key }}
+          owner: flanksource
+          repositories: charts
+          permission-contents: write
+          permission-pull-requests: write
 
       - name: Checkout charts repository
         # v4.1.1
@@ -53,7 +72,7 @@ jobs:
         with:
           repository: flanksource/charts
           ref: gh-pages
-          token: ${{ secrets.token }}
+          token: ${{ secrets.token || steps.app-token.outputs.token }}
           path: charts
 
       - name: Create PR branch
@@ -106,7 +125,7 @@ jobs:
       - name: Create and merge PR
         if: steps.create-branch.outputs.has_changes == 'true'
         env:
-          GH_TOKEN: ${{ secrets.token }}
+          GH_TOKEN: ${{ secrets.token || steps.app-token.outputs.token }}
         run: |
           cd charts
 

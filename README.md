@@ -149,7 +149,8 @@ jobs:
       version: "1.4.180"
       pr_title: "Release 1.4.180 of flanksource/flanksource-ui"
     secrets:
-      token: ${{ secrets.FLANKBOT }}
+      app_id: ${{ secrets.FLANKSOURCE_APP_ID }}
+      app_private_key: ${{ secrets.FLANKSOURCE_APP_SECRET }}
 ```
 
 **Inputs:**
@@ -161,7 +162,8 @@ jobs:
 
 **Secrets:**
 
-- `token` (required): GitHub token with permissions to push to flanksource/charts repository
+- `app_id` and `app_private_key`: GitHub App credentials, required when `token` is omitted. The App must be installed on `flanksource/charts` with Contents and Pull requests write access, and be allowed to merge the chart PR under the repository's branch rules. The workflow generates a short-lived token scoped to `charts`.
+- `token` (optional): Existing GitHub token for chart publishing. When supplied, App token generation is skipped, preserving compatibility with existing callers.
 
 **What it does:**
 
