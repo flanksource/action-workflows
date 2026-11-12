@@ -14,7 +14,14 @@ name: Publish Draft Release
       token:
         description: >-
           GitHub token to use for publishing the draft release.
-        required: true
+          If omitted, use the GitHub App credentials.
+        required: false
+      app_id:
+        description: GitHub App ID, required when token is omitted.
+        required: false
+      app_private_key:
+        description: GitHub App PEM private key, required when token is omitted.
+        required: false
 
 permissions: {}
 
@@ -22,10 +29,23 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions: {}
+    env:
+      RELEASE_TOKEN: ${{ secrets.token }}
     steps:
+      - name: Create release installation token
+        if: env.RELEASE_TOKEN == ''
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.app_id }}
+          private-key: ${{ secrets.app_private_key }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
       - name: Publish draft release
         env:
-          GH_TOKEN: ${{ secrets.token }}
+          GH_TOKEN: ${{ secrets.token || steps.app-token.outputs.token }}
           TAG: ${{ inputs.tag }}
         run: |
           gh release edit "$TAG" \
