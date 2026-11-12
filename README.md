@@ -384,7 +384,8 @@ jobs:
     with:
       tag: ${{ needs.create-release.outputs.tag }}
     secrets:
-      token: ${{ secrets.FLANKBOT }}
+      app_id: ${{ secrets.FLANKSOURCE_APP_ID }}
+      app_private_key: ${{ secrets.FLANKSOURCE_APP_SECRET }}
 ```
 
 **Inputs:**
@@ -393,7 +394,8 @@ jobs:
 
 **Secrets:**
 
-- `token` (required): token used to publish the draft GitHub release.
+- `token` (optional): token used to publish the draft GitHub release. When set, it is used instead of the GitHub App.
+- `app_id` and `app_private_key`: GitHub App credentials, required when `token` is omitted. The App must be installed on the calling repository with Contents write access. The workflow generates a short-lived token scoped to that repository.
 
 **What it does:**
 
