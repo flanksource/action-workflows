@@ -100,12 +100,9 @@ jobs:
 
           cp "${FILES[@]}" ./
 
-          # Update helm repository index
-          if [ -f index.yaml ]; then
-            helm repo index --merge index.yaml .
-          else
-            helm repo index .
-          fi
+          # Update helm repository index from every package on gh-pages, so
+          # entries for deleted packages are dropped
+          helm repo index .
 
           # Configure git
           git config user.name "github-actions[bot]"
